@@ -81,8 +81,9 @@ class TestIrrigationCalculations(unittest.TestCase):
             2)
         self.assertEqual(rounded, 3.18)
 
+    def test_calc_average_drawdown_per_day(self):
     # @patch('datetime.date')
-    def test_calc_average_drawdown_per_day(self, mock_date):
+    # def test_calc_average_drawdown_per_day(self, mock_date):
         # mock_date.today.return_value = date(2017, 5, 20)
         rounded = round(
             self.irrigation_calculations._calc_average_drawdown_per_day(
