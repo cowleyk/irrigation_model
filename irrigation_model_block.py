@@ -1,7 +1,5 @@
 from nio.block.base import Block
-from nio.properties import VersionProperty
-from nio.properties.string import StringProperty
-from nio.properties import Property, FloatProperty
+from nio.properties import VersionProperty, Property
 from nio.signal.base import Signal
 
 
@@ -9,58 +7,59 @@ from datetime import date
 
 
 class IrrigationModel(Block):
+    # TODO: ADD EnrichSignal mixin
 
     version = VersionProperty('0.1.0')
 
     # User configs from front end
-    user_root_zones = Property(title='Root Zones', default='[16, 24, 32]')
-    fc_high = FloatProperty(title='% FC Goal (root zone)', default='0.95')
-    fc_low = FloatProperty(title='% FC min (root zone)', default='0.85')
+    user_root_zones = Property(title='Root Zones', default='{{ [16, 24, 32] }}')
+    fc_high = Property(title='% FC Goal (root zone)', default='0.95')
+    fc_low = Property(title='% FC min (root zone)', default='0.85')
 
     # From n.io query to database
-    sm_units = Property(title='SM Data', default='{}')
+    sm_units = Property(title='SM Data', default='{{ {} }}')
     last_irrigation_date = Property(title='Date of Last Irrigation',
                                     default='')
-    last_irrigation_gpp = FloatProperty(title='Last Irrigation\'s GPP',
-                                    default='0')
+    last_irrigation_gpp = Property(title='Last Irrigation\'s GPP',
+                                    default='{{ 0 }}')
     # One-time configs
-    vineyard_cfgs_signal = Property(title='Attribute Title',
-                                   default='{}')
-    multiplier_signal = FloatProperty(title='Multiplier',
-                                      default='1')
-    all_zones = Property(title='All Zones', default='[4, 8, 16, 24, 32, 40]')
+    vineyard_cfgs_signal = Property(title='Vineyard Depths Configuration',
+                                   default='{{ {} }}')
+    multiplier_signal = Property(title='Multiplier',
+                                      default='{{ 1.3 }}')
+    all_zones = Property(title='All Zones',
+                         default='{{ [4, 8, 16, 24, 32, 40] }}')
 
     def process_signals(self, signals):
-        calcd_signal = []
-        # TODO: FOCUS ON GPP REC
         for signal in signals:
             vineyard_cfgs = self.vineyard_cfgs_signal(signal)
-            multiplier = self.multiplier_signal(signal)
+            multiplier = float(self.multiplier_signal(signal))
+            all_zones = self.all_zones(signal)
             last_irrigation_date = self.last_irrigation_date(signal)
-            last_irrigation_gpp = self.last_irrigation_gpp(signal)
-            fc_high = self.fc_high(signal)
-            fc_low = self.fc_low(signal)
+            last_irrigation_gpp = float(self.last_irrigation_gpp(signal))
+            fc_high = float(self.fc_high(signal))
+            fc_low = float(self.fc_low(signal))
             sm_units = self.sm_units(signal)
             user_root_zones = self.user_root_zones(signal)
             perc_fc_in_root_zone = \
                 IrrigationCalculations._calc_percent_fc_average_root_zone(
-                    user_root_zones, sm_units)
+                    user_root_zones, sm_units, vineyard_cfgs)
             perc_awc_in_root_zone = \
                 IrrigationCalculations._calc_percent_awc_average_root_zone(
-                    user_root_zones, sm_units)
+                    user_root_zones, sm_units, vineyard_cfgs)
             gpp_required = \
                 IrrigationCalculations._calc_gpp_required_to_reach_fc_goal(
-                    user_root_zones, sm_units, fc_high, last_irrigation_gpp)
+                    user_root_zones, sm_units, fc_high, last_irrigation_gpp,
+                    all_zones, vineyard_cfgs, multiplier)
             avg_draw_down = \
                 IrrigationCalculations._calc_average_drawdown_per_day(
                     sm_units, last_irrigation_date)
             est_days_until_irr = \
                 IrrigationCalculations._calc_est_days_until_irr(
-                    user_root_zones, sm_units, fc_low, last_irrigation_date)
+                    user_root_zones, sm_units, fc_low,
+                    last_irrigation_date, vineyard_cfgs)
 
         calcd_signal = [Signal({
-            'sm_units': sm_units,
-            'user_root_zones': user_root_zones,
             'percent_of_FC': perc_fc_in_root_zone,
             'percent_of_AWC': perc_awc_in_root_zone,
             'GPP_required_to_reach_FC_high': gpp_required,
@@ -72,7 +71,8 @@ class IrrigationModel(Block):
 
 class IrrigationCalculations():
 
-    def _calc_percent_fc_user_zones(self, user_root_zones, sm_units):
+    def _calc_percent_fc_user_zones(self, user_root_zones,
+                                    sm_units, vineyard_cfgs):
         # current SM units/Field capacity points
         percent_fc = []
         for zone in user_root_zones:
@@ -80,16 +80,18 @@ class IrrigationCalculations():
                               / vineyard_cfgs[zone]['FieldCapacityPoint'])
         return percent_fc
 
-    def _calc_percent_fc_average_root_zone(self, user_root_zones, sm_units):
+    def _calc_percent_fc_average_root_zone(self, user_root_zones,
+                                           sm_units, vineyard_cfgs):
         # average of fc
         percent_fc_zones = self._calc_percent_fc_user_zones(user_root_zones,
-                                                      sm_units)
+                                                      sm_units, vineyard_cfgs)
         fc_total = 0
         for zone in percent_fc_zones:
             fc_total = fc_total + zone
         return fc_total / len(user_root_zones)
 
-    def _calc_percent_awc_user_zones(self, user_root_zones, sm_units):
+    def _calc_percent_awc_user_zones(self, user_root_zones,
+                                     sm_units, vineyard_cfgs):
         # (current SM units - perm wilting point)/(field cap points - perm wilting point)
         percent_awc = []
         for zone in user_root_zones:
@@ -100,10 +102,12 @@ class IrrigationCalculations():
                 - vineyard_cfgs[zone]['PermWiltingPoint']))
         return percent_awc
 
-    def _calc_percent_awc_average_root_zone(self, user_root_zones, sm_units):
+    def _calc_percent_awc_average_root_zone(self, user_root_zones,
+                                            sm_units, vineyard_cfgs):
         # average of awc
         percent_awc_zones = self._calc_percent_awc_user_zones(user_root_zones,
-                                                        sm_units)
+                                                              sm_units,
+                                                              vineyard_cfgs)
         awc_total = 0
         for zone in percent_awc_zones:
             awc_total = awc_total + zone
@@ -112,16 +116,18 @@ class IrrigationCalculations():
     # ~~~~~~~~~~~~~~~~~~~
     # Gallons to Apply to Reach Target FC in Root Zone
 
-    def _zones_above_user_input(self, user_root_zones):
+    def _zones_above_user_input(self, user_root_zones, all_zones):
         zones_above = []
         for zone in all_zones:
             if zone not in user_root_zones and zone < min(user_root_zones):
                 zones_above.append(zone)
         return zones_above
 
-    def _calc_sm_deficit_sp_above_user_zones(self, user_root_zones, sm_units):
+    def _calc_sm_deficit_sp_above_user_zones(self, user_root_zones,
+                                             sm_units, all_zones,
+                                             vineyard_cfgs):
         # sum(current SM units) - sum(saturation pts)
-        zones_above = self._zones_above_user_input(user_root_zones)
+        zones_above = self._zones_above_user_input(user_root_zones, all_zones)
         sm_units_sum = 0
         saturation_point_sum = 0
         for zone in zones_above:
@@ -130,9 +136,11 @@ class IrrigationCalculations():
                                    + vineyard_cfgs[zone]['SaturationPoint']
         return sm_units_sum - saturation_point_sum
 
-    def _calc_sm_deficit_fc_above_user_zones(self, user_root_zones, sm_units):
+    def _calc_sm_deficit_fc_above_user_zones(self, user_root_zones,
+                                             sm_units, all_zones,
+                                             vineyard_cfgs):
         # sum(current SM units) - sum(fc pts)
-        zones_above = self._zones_above_user_input(user_root_zones)
+        zones_above = self._zones_above_user_input(user_root_zones, all_zones)
         sm_units_sum = 0
         fc_point_sum = 0
         for zone in zones_above:
@@ -141,27 +149,40 @@ class IrrigationCalculations():
                            + vineyard_cfgs[zone]['FieldCapacityPoint']
         return sm_units_sum - fc_point_sum
 
-    def _calc_excess_sm_units_above_user_zones(self, user_root_zones, sm_units):
+    def _calc_excess_sm_units_above_user_zones(self, user_root_zones,
+                                               sm_units, all_zones,
+                                               vineyard_cfgs):
         return self._calc_sm_deficit_sp_above_user_zones(user_root_zones,
-                                                        sm_units) \
+                                                         sm_units,
+                                                         all_zones,
+                                                         vineyard_cfgs) \
                - self._calc_sm_deficit_fc_above_user_zones(user_root_zones,
-                                                        sm_units)
+                                                           sm_units,
+                                                           all_zones,
+                                                           vineyard_cfgs)
 
-    def _calc_sm_deficit_user_zones(self, user_root_zones, sm_units, fc_high):
+    def _calc_sm_deficit_user_zones(self, user_root_zones,
+                                    sm_units, fc_high,
+                                    vineyard_cfgs):
         # sum(current SM units) - [sum(fc points) * fc high]
         sm_units_sum = 0
         fc_points_sum = 0
         for zone in user_root_zones:
-            sm_units_sum = sm_units_sum + sm_units[zone]['current']
-            fc_points_sum = fc_points_sum + vineyard_cfgs[zone][
-                'FieldCapacityPoint']
+            sm_units_sum += sm_units[zone]['current']
+            fc_points_sum += vineyard_cfgs[zone]['FieldCapacityPoint']
         return sm_units_sum - (fc_points_sum * fc_high)
 
-    def _calc_required_sm_increase_for_fc_high(self, user_root_zones, sm_units,
-                                              fc_high):
-        a = self._calc_sm_deficit_fc_above_user_zones(user_root_zones, sm_units)
+    def _calc_required_sm_increase_for_fc_high(self, user_root_zones,
+                                               sm_units, fc_high,
+                                               all_zones, vineyard_cfgs,
+                                               multiplier):
+        a = self._calc_sm_deficit_fc_above_user_zones(user_root_zones,
+                                                      sm_units,
+                                                      all_zones,
+                                                      vineyard_cfgs)
         b = self._calc_sm_deficit_user_zones(user_root_zones, sm_units,
-                                       fc_high) * multiplier
+                                             fc_high, vineyard_cfgs)\
+            * multiplier
         return a + b
 
     def _calc_absorption_rate(self, sm_units, last_irrigation_gpp):
@@ -177,12 +198,17 @@ class IrrigationCalculations():
 
     def _calc_gpp_required_to_reach_fc_goal(self, user_root_zones,
                                             sm_units, fc_high,
-                                            last_irrigation_gpp):
-        if self._calc_sm_deficit_user_zones(user_root_zones,
-                                            sm_units, fc_high) < 0:
+                                            last_irrigation_gpp, all_zones,
+                                            vineyard_cfgs, multiplier):
+        if self._calc_sm_deficit_user_zones(user_root_zones, sm_units,
+                                            fc_high, vineyard_cfgs) < 0:
             return abs(
                 self._calc_required_sm_increase_for_fc_high(user_root_zones,
-                                                            sm_units, fc_high)
+                                                            sm_units,
+                                                            fc_high,
+                                                            all_zones,
+                                                            vineyard_cfgs,
+                                                            multiplier)
                 / self._calc_absorption_rate(sm_units, last_irrigation_gpp))
         else:
             return 0
@@ -202,26 +228,31 @@ class IrrigationCalculations():
         return sum(change_in_sm_units_exclude_evaporation)
 
     def _calc_average_drawdown_per_day(self, sm_units, last_irrigation_date):
-        total_draw_down = self._calc_total_draw_down_since_last_irrigation(sm_units)
+        total_draw_down = self._calc_total_draw_down_since_last_irrigation(
+            sm_units)
+        # print(date.today())
         return total_draw_down / ((date.today() - last_irrigation_date).days)
 
-    def _calc_sm_draw_down_to_target_irr_percent(self, user_root_zones, sm_units,
-                                                fc_low):
+    def _calc_sm_draw_down_to_target_irr_percent(self, user_root_zones,
+                                                 sm_units, fc_low,
+                                                 vineyard_cfgs):
         current_sm_sum = 0
         fc_point_sum = 0
         for zone in user_root_zones:
             current_sm_sum = current_sm_sum + sm_units[zone]['current']
-            fc_point_sum = fc_point_sum + vineyard_cfgs[zone][
-                'FieldCapacityPoint']
+            fc_point_sum = fc_point_sum \
+                           + vineyard_cfgs[zone]['FieldCapacityPoint']
         fc_point_sum_fc_low = fc_point_sum * fc_low
         return fc_point_sum_fc_low - current_sm_sum
 
     def _calc_est_days_until_irr(self, user_root_zones, sm_units, fc_low,
-                                last_irrigation_date):
+                                last_irrigation_date, vineyard_cfgs):
         return self._calc_sm_draw_down_to_target_irr_percent(user_root_zones,
-                                                       sm_units,
-                                                       fc_low) / self._calc_average_drawdown_per_day(
-            sm_units, last_irrigation_date)
+                                                             sm_units,
+                                                             fc_low,
+                                                             vineyard_cfgs) \
+               / self._calc_average_drawdown_per_day(sm_units,
+                                                     last_irrigation_date)
 
 # vineyard_cfgs = {
 #     '4': {
@@ -254,16 +285,4 @@ class IrrigationCalculations():
 #         'FieldCapacityPoint': 64.0,
 #         'PermWiltingPoint': 41.0,
 #     },
-# }
-# multiplier = 1.3
-# all_zones = ['4', '8', '16', '24', '32', '40']
-
-# calcd_signal = {
-#     'sm_units': sm_units,
-#     'user_root_zones': user_root_zones,
-#     'percent_of_FC': 0.92,
-#     'percent_of_AWC': 0.83,
-#     'GPP_required_to_reach_FC_high': 6.6,
-#     'avg_draw_down_per_day': -2.0,
-#     'est_days_to_next_irrigation': 5.7,
 # }
