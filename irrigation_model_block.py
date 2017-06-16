@@ -20,10 +20,12 @@ class IrrigationModel(Block):
     sm_units = Property(title='SM Data', default='{{ {} }}')
     last_irrigation_date = Property(title='Date of Last Irrigation',
                                     default='')
+    current_date = Property(title='Current Date',
+                                    default='')
     last_irrigation_gpp = Property(title='Last Irrigation\'s GPP',
                                     default='{{ 0 }}')
     # One-time configs
-    vineyard_cfgs_signal = Property(title='Vineyard Depths Configuration',
+    vineyard_cfgs = Property(title='Vineyard Depths Configuration',
                                    default='{{ {} }}')
     multiplier_signal = Property(title='Multiplier',
                                       default='{{ 1.3 }}')
@@ -32,10 +34,11 @@ class IrrigationModel(Block):
 
     def process_signals(self, signals):
         for signal in signals:
-            vineyard_cfgs = self.vineyard_cfgs_signal(signal)
+            vineyard_cfgs = self.vineyard_cfgs(signal)
             multiplier = float(self.multiplier_signal(signal))
             all_zones = self.all_zones(signal)
             last_irrigation_date = self.last_irrigation_date(signal)
+            current_date = self.current_date(signal)
             last_irrigation_gpp = float(self.last_irrigation_gpp(signal))
             fc_high = float(self.fc_high(signal))
             fc_low = float(self.fc_low(signal))
@@ -53,11 +56,11 @@ class IrrigationModel(Block):
                     all_zones, vineyard_cfgs, multiplier)
             avg_draw_down = \
                 IrrigationCalculations._calc_average_drawdown_per_day(
-                    sm_units, last_irrigation_date)
+                    sm_units, last_irrigation_date, current_date)
             est_days_until_irr = \
                 IrrigationCalculations._calc_est_days_until_irr(
                     user_root_zones, sm_units, fc_low,
-                    last_irrigation_date, vineyard_cfgs)
+                    last_irrigation_date, current_date, vineyard_cfgs)
 
         calcd_signal = [Signal({
             'percent_of_FC': perc_fc_in_root_zone,
@@ -227,11 +230,11 @@ class IrrigationCalculations():
                 change_in_sm_units - (change_in_sm_units * evaporation))
         return sum(change_in_sm_units_exclude_evaporation)
 
-    def _calc_average_drawdown_per_day(self, sm_units, last_irrigation_date):
+    def _calc_average_drawdown_per_day(self, sm_units,
+                                       last_irrigation_date, current_date):
         total_draw_down = self._calc_total_draw_down_since_last_irrigation(
             sm_units)
-        # print(date.today())
-        return total_draw_down / ((date.today() - last_irrigation_date).days)
+        return total_draw_down / ((current_date - last_irrigation_date).days)
 
     def _calc_sm_draw_down_to_target_irr_percent(self, user_root_zones,
                                                  sm_units, fc_low,
@@ -245,14 +248,16 @@ class IrrigationCalculations():
         fc_point_sum_fc_low = fc_point_sum * fc_low
         return fc_point_sum_fc_low - current_sm_sum
 
-    def _calc_est_days_until_irr(self, user_root_zones, sm_units, fc_low,
-                                last_irrigation_date, vineyard_cfgs):
+    def _calc_est_days_until_irr(self, user_root_zones, sm_units,
+                                 fc_low,last_irrigation_date,
+                                 current_date, vineyard_cfgs):
         return self._calc_sm_draw_down_to_target_irr_percent(user_root_zones,
                                                              sm_units,
                                                              fc_low,
                                                              vineyard_cfgs) \
                / self._calc_average_drawdown_per_day(sm_units,
-                                                     last_irrigation_date)
+                                                     last_irrigation_date,
+                                                     current_date)
 
 # vineyard_cfgs = {
 #     '4': {

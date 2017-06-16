@@ -23,25 +23,28 @@ class TestIrrigationModel(NIOBlockTestCase):
                                        '{{$last_irrigation_gpp}}',
                                    'last_irrigation_date': \
                                        '{{$last_irrigation_date}}',
-                                   'vineyard_configs': '{{ {} }}'})
+                                   'current_date': '{{$current_date}}',
+                                   'vineyard_cfgs': '{{ $vineyard_cfgs }}'})
         blk.start()
         blk.process_signals([Signal({'user_root_zones': [8, 16],
                                      'sm_units': {1: 1},
                                      'fc_high': 0.96,
                                      'fc_low': 0.69,
                                      'last_irrigation_gpp': 6,
-                                     'last_irrigation_date': 'datetime'})])
+                                     'last_irrigation_date': 'datetime',
+                                     'current_date': 'datetime2',
+                                     'vineyard_cfgs': {2: 2},})])
         blk.stop()
         mock_model._calc_percent_fc_average_root_zone.assert_called_once_with(
-                    [8, 16], {1: 1}, {})
+                    [8, 16], {1: 1}, {2: 2})
         mock_model._calc_percent_awc_average_root_zone.assert_called_once_with(
-                    [8, 16], {1: 1}, {})
+                    [8, 16], {1: 1}, {2: 2})
         mock_model._calc_gpp_required_to_reach_fc_goal.assert_called_once_with(
-                    [8, 16], {1: 1}, 0.96, 6, [4, 8, 16, 24, 32, 40], {}, 1.3)
+                    [8, 16], {1: 1}, 0.96, 6, [4, 8, 16, 24, 32, 40], {2: 2}, 1.3)
         mock_model._calc_average_drawdown_per_day.assert_called_once_with(
-                    {1: 1}, 'datetime')
+                    {1: 1}, 'datetime', 'datetime2')
         mock_model._calc_est_days_until_irr.assert_called_once_with(
-                    [8, 16], {1: 1}, 0.69, 'datetime', {})
+                    [8, 16], {1: 1}, 0.69, 'datetime', 'datetime2', {2: 2})
 
         self.assert_num_signals_notified(1)
         self.assertDictEqual(
@@ -87,18 +90,18 @@ class TestIrrigationCalculations(unittest.TestCase):
         # mock_date.today.return_value = date(2017, 5, 20)
         rounded = round(
             self.irrigation_calculations._calc_average_drawdown_per_day(
-                sm_units, last_irrigation_date),
+                sm_units, last_irrigation_date, current_date),
             2)
-        self.assertEqual(rounded, -1.9)
+        self.assertEqual(rounded, -1.88)
 
     def test_calc_est_days_until_irr(self):
         rounded = round(
             self.irrigation_calculations._calc_est_days_until_irr(
                 user_root_zones, sm_units,
                 fc_low, last_irrigation_date,
-                vineyard_cfgs),
+                current_date, vineyard_cfgs),
             2)
-        self.assertEqual(rounded, 17.96)
+        self.assertEqual(rounded, 6.57)
 
 sm_units = {
     '4': {
@@ -137,6 +140,7 @@ fc_low = 0.85
 user_root_zones = ['16', '24', '32']
 last_irrigation_gpp = 8
 last_irrigation_date = date(2017, 5, 5)
+current_date = date(2017, 5, 20)
 vineyard_cfgs = {
     '4': {
         'SaturationPoint': 69.0,
